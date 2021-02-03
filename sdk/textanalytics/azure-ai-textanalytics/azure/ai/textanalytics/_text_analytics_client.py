@@ -653,6 +653,9 @@ class TextAnalyticsClient(TextAnalyticsClientBase):
         show_opinion_mining = kwargs.pop("show_opinion_mining", None)
 
         if self._opinion_mining_supported:
+            if show_opinion_mining is not None and language != "en":
+                raise ValueError("'show_opinion_mining' is only available for English language documents.")
+            
             if show_opinion_mining is None:
                 show_opinion_mining = True
             
