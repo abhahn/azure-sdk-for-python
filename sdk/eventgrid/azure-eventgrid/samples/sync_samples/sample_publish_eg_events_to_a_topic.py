@@ -14,6 +14,7 @@ USAGE:
     2) EG_TOPIC_HOSTNAME - The topic hostname. Typically it exists in the format
     "<YOUR-TOPIC-NAME>.<REGION-NAME>.eventgrid.azure.net".
 """
+# [START publish_eg_event_to_topic]
 import os
 from azure.eventgrid import EventGridPublisherClient, EventGridEvent
 from azure.core.credentials import AzureKeyCredential
@@ -34,3 +35,4 @@ client.send([
 		data_version="2.0"
 	)
 ])
+# [END publish_eg_event_to_topic]
