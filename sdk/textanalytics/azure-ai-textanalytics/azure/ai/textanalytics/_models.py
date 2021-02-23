@@ -196,6 +196,9 @@ class AnalyzeHealthcareEntitiesResultItem(DictMixin):
     :ivar entities: Identified Healthcare entities in the document.
     :vartype entities:
         list[~azure.ai.textanalytics.HealthcareEntity]
+    :ivar relations: Relations identified between 2 or more entities within the document.
+    :vartype relations:
+        list[~azure.ai.textanalytics.HealthcareRelation]
     :ivar warnings: Warnings encountered while processing document. Results will still be returned
         if there are warnings, but they may not be fully accurate.
     :vartype warnings: list[~azure.ai.textanalytics.TextAnalyticsWarning]
@@ -210,6 +213,7 @@ class AnalyzeHealthcareEntitiesResultItem(DictMixin):
     def __init__(self, **kwargs):
         self.id = kwargs.get("id", None)
         self.entities = kwargs.get("entities", None)
+        self.relations = kwargs.get("relations", None)
         self.warnings = kwargs.get("warnings", [])
         self.statistics = kwargs.get("statistics", None)
         self.is_error = False
@@ -239,12 +243,14 @@ class AnalyzeHealthcareEntitiesResultItem(DictMixin):
     @classmethod
     def _from_generated(cls, healthcare_result):
         entities = [HealthcareEntity._from_generated(e) for e in healthcare_result.entities] # pylint: disable=protected-access
-        if healthcare_result.relations:
-            cls._update_related_entities(entities, healthcare_result.relations)
+        relations = [
+            HealthcareRelation._from_generated(r, entities) for r in healthcare_result.relations # pylint: disable=protected-access
+        ] if healthcare_result.relations else []
 
         return cls(
             id=healthcare_result.id,
             entities=entities,
+            relations=relations,
             warnings=healthcare_result.warnings,
             statistics=healthcare_result.statistics
         )
@@ -412,6 +418,7 @@ class HealthcareEntity(DictMixin):
     """HealthcareEntity contains information about a Healthcare entity found in text.
 
     :ivar str text: Entity text as appears in the request.
+    :ivar str normalized_text: Normalized equivalent of the value of the `text`
     :ivar str category: Entity category, see the following link for health's named
         entity types: https://aka.ms/text-analytics-health-entities
     :ivar str subcategory: Entity subcategory.
@@ -421,9 +428,6 @@ class HealthcareEntity(DictMixin):
     :ivar int offset: The entity text offset from the start of the document.
         This value depends on the value of the `string_index_type` parameter specified
         in the original request, which is UnicodeCodePoints by default.
-    :ivar related_entities: Other healthcare entities that are related to this
-        specific entity.
-    :vartype related_entities: list[~azure.ai.textanalytics.HealthcareEntity]
     :ivar float confidence_score: Confidence score between 0 and 1 of the extracted
         entity.
     :ivar data_sources: A collection of entity references in known data sources.
@@ -438,7 +442,6 @@ class HealthcareEntity(DictMixin):
         self.offset = kwargs.get("offset", None)
         self.confidence_score = kwargs.get("confidence_score", None)
         self.data_sources = kwargs.get("data_sources", [])
-        self.related_entities = {}
 
     @classmethod
     def _from_generated(cls, healthcare_entity):
@@ -454,20 +457,16 @@ class HealthcareEntity(DictMixin):
             ] if healthcare_entity.links else None
         )
 
-    def __hash__(self):
-        return hash(repr(self))
-
     def __repr__(self):
         return "HealthcareEntity(text={}, category={}, subcategory={}, length={}, offset={}, confidence_score={}, "\
-        "data_sources={}, related_entities={})".format(
+        "data_sources={})".format(
             self.text,
             self.category,
             self.subcategory,
             self.length,
             self.offset,
             self.confidence_score,
-            repr(self.data_sources),
-            repr(self.related_entities)
+            repr(self.data_sources)
         )[:1024]
 
 
@@ -485,6 +484,39 @@ class HealthcareEntityDataSource(DictMixin):
 
     def __repr__(self):
         return "HealthcareEntityDataSource(entity_id={}, name={})".format(self.entity_id, self.name)[:1024]
+
+
+class HealthcareRelation(DictMixin):
+    """
+    HealthcareRelation represents an n-ary relation between 2 or more entities.  Each entity within the relation
+    has a corresponding role.  For example, an instance of HealthcareRelation with type 'PresciptionOfMedication'
+    may have entities with roles 'MedicationName', 'Dosage' and 'Frequency'.
+
+    :ivar str type: The type of relation, such as 'PrescriptionOfMedication', 'PhenotypeOfGeneticMutation',
+    'ExaminationResult', etc.
+    :ivar entity_roles: A dictionary mapping roles to entities.
+    :vartype entity_roles: dict[str, ~azure.ai.textanalytics.HealthcareEntity]
+    """
+
+    def __init__(self, **kwargs):
+        self.type = kwargs.get("type")
+        self.entity_roles = kwargs.get("entity_roles")
+
+    @classmethod
+    def _from_generated(cls, healthcare_relation, entities):
+        entity_roles = {}
+        for entity in healthcare_relation.entities:
+            _, entity_idx = _get_indices(entity.ref)
+
+            if entity.role not in entity_roles.keys():
+                entity_roles[entity.role] = []
+
+            entity_roles[entity.role].append(entities[entity_idx])
+
+        return cls(
+            type=healthcare_relation.relation_type,
+            entity_roles=entity_roles
+        )
 
 
 class TextAnalyticsError(DictMixin):
