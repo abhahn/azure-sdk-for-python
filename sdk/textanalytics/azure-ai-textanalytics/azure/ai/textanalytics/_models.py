@@ -218,28 +218,6 @@ class AnalyzeHealthcareEntitiesResultItem(DictMixin):
         self.statistics = kwargs.get("statistics", None)
         self.is_error = False
 
-    @staticmethod
-    def _update_related_entities(entities, relations_result):
-        relation_dict = {}
-        for r in relations_result:
-            _, source_idx = _get_indices(r.source)
-            _, target_idx = _get_indices(r.target)
-
-            if entities[source_idx] not in relation_dict.keys():
-                relation_dict[entities[source_idx]] = {}
-
-            if entities[target_idx] not in relation_dict.keys():
-                relation_dict[entities[target_idx]] = {}
-
-            if r.bidirectional:
-                relation_dict[entities[target_idx]][entities[source_idx]] = r.relation_type
-
-            relation_dict[entities[source_idx]][entities[target_idx]] = r.relation_type
-
-        for entity in entities:
-            if entity in relation_dict.keys():
-                entity.related_entities.update(relation_dict[entity])
-
     @classmethod
     def _from_generated(cls, healthcare_result):
         entities = [HealthcareEntity._from_generated(e) for e in healthcare_result.entities] # pylint: disable=protected-access
@@ -256,10 +234,11 @@ class AnalyzeHealthcareEntitiesResultItem(DictMixin):
         )
 
     def __repr__(self):
-        return "AnalyzeHealthcareEntitiesResultItem(id={}, entities={}, warnings={}, statistics={}, \
+        return "AnalyzeHealthcareEntitiesResultItem(id={}, entities={}, relations={}, warnings={}, statistics={}, \
         is_error={})".format(
             self.id,
             self.entities,
+            self.relations,
             self.warnings,
             self.statistics,
             self.is_error
@@ -432,16 +411,20 @@ class HealthcareEntity(DictMixin):
         entity.
     :ivar data_sources: A collection of entity references in known data sources.
     :vartype data_sources: list[~azure.ai.textanalytics.HealthcareEntityDataSource]
+    :ivar assertion: TODO
+    :vartype assertion: ~azure.ai.textanalytics.HealthcareEntityAssertion
     """
 
     def __init__(self, **kwargs):
         self.text = kwargs.get("text", None)
+        self.normalized_text = kwargs.get("normalized_text", None)
         self.category = kwargs.get("category", None)
         self.subcategory = kwargs.get("subcategory", None)
         self.length = kwargs.get("length", None)
         self.offset = kwargs.get("offset", None)
         self.confidence_score = kwargs.get("confidence_score", None)
         self.data_sources = kwargs.get("data_sources", [])
+        self.assertion = kwargs.get("assertion", None)
 
     @classmethod
     def _from_generated(cls, healthcare_entity):
@@ -453,19 +436,26 @@ class HealthcareEntity(DictMixin):
             offset=healthcare_entity.offset,
             confidence_score=healthcare_entity.confidence_score,
             data_sources=[
-                HealthcareEntityDataSource(entity_id=l.id, name=l.data_source) for l in healthcare_entity.links
-            ] if healthcare_entity.links else None
+                HealthcareEntityDataSource(
+                    entity_id=l.id,
+                    name=l.data_source
+                ) for l in healthcare_entity.links
+            ] if healthcare_entity.links else None,
+            assertion=HealthcareEntityAssertion._from_generated( # pylint: disable=protected-access
+                healthcare_entity.assertion
+            ) if healthcare_entity.assertion else None
         )
 
     def __repr__(self):
         return "HealthcareEntity(text={}, category={}, subcategory={}, length={}, offset={}, confidence_score={}, "\
-        "data_sources={})".format(
+        "assertion={}, data_sources={})".format(
             self.text,
             self.category,
             self.subcategory,
             self.length,
             self.offset,
             self.confidence_score,
+            repr(self.assertion),
             repr(self.data_sources)
         )[:1024]
 
@@ -482,8 +472,38 @@ class HealthcareEntityDataSource(DictMixin):
         self.entity_id = kwargs.get("entity_id", None)
         self.name = kwargs.get("name", None)
 
+    @classmethod
+    def _from_generated(cls, heathcare_entity_datasources):
+        pass
+
     def __repr__(self):
         return "HealthcareEntityDataSource(entity_id={}, name={})".format(self.entity_id, self.name)[:1024]
+
+
+class HealthcareEntityAssertion(DictMixin):
+    """
+    TODO
+    """
+
+    def __init__(self, **kwargs):
+        self.association = kwargs.get("association", None)
+        self.certainty = kwargs.get("certainty", None)
+        self.conditionality = kwargs.get("conditionality", None)
+
+    @classmethod
+    def _from_generated(cls, healthcare_entity_assertion):
+        return cls(
+            association=healthcare_entity_assertion.association,
+            certainty=healthcare_entity_assertion.certainty,
+            conditionality=healthcare_entity_assertion.conditionality
+        )
+
+    def __repr__(self):
+        return "HealthcareEntityAssertion(association={}, certainty={}, conditionality={})".format(
+            self.association,
+            self.certainty,
+            self.conditionality
+        )[:1024]
 
 
 class HealthcareRelation(DictMixin):
@@ -494,28 +514,52 @@ class HealthcareRelation(DictMixin):
 
     :ivar str type: The type of relation, such as 'PrescriptionOfMedication', 'PhenotypeOfGeneticMutation',
     'ExaminationResult', etc.
-    :ivar entity_roles: A dictionary mapping roles to entities.
-    :vartype entity_roles: dict[str, ~azure.ai.textanalytics.HealthcareEntity]
+    :ivar roles: A list of identified entity roles within the relation.
+    :vartype roles: list[~azure.ai.textanalytics.HealthcareRelationRole]
     """
 
     def __init__(self, **kwargs):
         self.type = kwargs.get("type")
-        self.entity_roles = kwargs.get("entity_roles")
+        self.roles = kwargs.get("roles")
 
     @classmethod
-    def _from_generated(cls, healthcare_relation, entities):
-        entity_roles = {}
-        for entity in healthcare_relation.entities:
+    def _from_generated(cls, healthcare_relation_result, entities):
+        roles = []
+
+        for entity in healthcare_relation_result.entities:
             _, entity_idx = _get_indices(entity.ref)
-
-            if entity.role not in entity_roles.keys():
-                entity_roles[entity.role] = []
-
-            entity_roles[entity.role].append(entities[entity_idx])
+            roles.append(
+                HealthcareRelationRole(
+                    name=entity.role,
+                    entity=entities[entity_idx]
+                )
+            )
 
         return cls(
-            type=healthcare_relation.relation_type,
-            entity_roles=entity_roles
+            type=healthcare_relation_result.relation_type,
+            roles=roles
+        )
+
+    def __repr__(self):
+        return "HealthcareRelation(type={}, roles={})".format(
+            self.type,
+            repr(self.roles)
+        )
+
+
+class HealthcareRelationRole(DictMixin):
+    """
+    TODO
+    """
+
+    def __init__(self, **kwargs):
+        self.name = kwargs.get("name", None)
+        self.entity = kwargs.get("entity", None)
+
+    def __repr__(self):
+        return "HealthcareRelationRole(name={}, entity={})".format(
+            self.name,
+            repr(self.entity)
         )
 
 
